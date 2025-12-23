@@ -13,4 +13,5 @@ public interface AssetRepository extends JpaRepository<Asset, UUID> {
     List<Asset> findByAuthorUserId(String authorUserId);
 
     List<Asset> findByAuthorUserIdAndIsActiveTrue(String authorUserId);
+
 }
