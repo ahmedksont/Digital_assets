@@ -28,12 +28,12 @@ public class License {
     private UUID licenseId;
 
     @Column(nullable = false)
-    private String userId; // comes from Hub Digital
+    private String userId;
 
     @Column(nullable = false)
     private UUID assetId;
 
-    private Integer maxDownloads;      // null = unlimited
+    private Integer maxDownloads;
     private Integer downloadsCount = 0;
 
     private Instant expiresAt;          // null = never expires
