@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.*;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -14,11 +16,12 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AssetService {
 
-    private final AssetRepository repository;
-    private final StorageService storageService;
+    private static final String STORAGE_DIR = "storage/assets";
+
+    private final AssetRepository assetRepository;
 
     /* ============================
-       CREATE WITH FILE UPLOAD
+       CREATE (UPLOAD)
        ============================ */
     public Asset createWithUpload(
             MultipartFile file,
@@ -27,40 +30,53 @@ public class AssetService {
             String version,
             String authorUserId
     ) {
-        StorageResult stored = storageService.upload(file);
+        try {
+            Files.createDirectories(Path.of(STORAGE_DIR));
 
-        Asset asset = Asset.builder()
-                .name(name)
-                .description(description)
-                .version(version)
-                .filename(stored.filename())
-                .storageBucket(stored.bucket())
-                .storagePath(stored.path())
-                .sizeBytes(stored.size())
-                .contentType(file.getContentType())
-                .authorUserId(authorUserId)
-                .isActive(true)
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
+            String filename = UUID.randomUUID() + "-" + file.getOriginalFilename();
+            Path filePath = Path.of(STORAGE_DIR, filename);
 
-        return repository.save(asset);
+            Files.copy(
+                    file.getInputStream(),
+                    filePath,
+                    StandardCopyOption.REPLACE_EXISTING
+            );
+
+            Asset asset = new Asset();
+            asset.setName(name);
+            asset.setDescription(description);
+            asset.setVersion(version);
+            asset.setFilename(file.getOriginalFilename());
+            asset.setStoragePath(filePath.toString());
+            asset.setStorageBucket("local"); // ✅ IMPORTANT
+            asset.setSizeBytes(file.getSize());
+            asset.setContentType(file.getContentType());
+            asset.setAuthorUserId(authorUserId);
+            asset.setActive(true);
+            asset.setCreatedAt(Instant.now());
+            asset.setUpdatedAt(Instant.now());
+
+            return assetRepository.save(asset);
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to store file locally", e);
+        }
     }
 
     /* ============================
        READ
        ============================ */
     public Asset getById(UUID id) {
-        return repository.findById(id)
+        return assetRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Asset not found"));
     }
 
     public List<Asset> getAllActive() {
-        return repository.findByIsActiveTrue();
+        return assetRepository.findByIsActiveTrue();
     }
 
     public List<Asset> getByAuthor(String authorId) {
-        return repository.findByAuthorUserIdAndIsActiveTrue(authorId);
+        return assetRepository.findByAuthorUserId(authorId);
     }
 
     /* ============================
@@ -74,53 +90,62 @@ public class AssetService {
         asset.setVersion(updated.getVersion());
         asset.setUpdatedAt(Instant.now());
 
-        return repository.save(asset);
+        return assetRepository.save(asset);
     }
 
     /* ============================
        UPDATE FILE
        ============================ */
     public Asset updateFile(UUID id, MultipartFile file) {
-
         Asset asset = getById(id);
-        StorageResult stored = storageService.upload(file);
 
-        asset.setFilename(stored.filename());
-        asset.setStorageBucket(stored.bucket());
-        asset.setStoragePath(stored.path());
-        asset.setSizeBytes(stored.size());
-        asset.setContentType(file.getContentType());
-        asset.setUpdatedAt(Instant.now());
+        try {
+            Path path = Path.of(asset.getStoragePath());
 
-        return repository.save(asset);
+            Files.copy(
+                    file.getInputStream(),
+                    path,
+                    StandardCopyOption.REPLACE_EXISTING
+            );
+
+            asset.setFilename(file.getOriginalFilename());
+            asset.setSizeBytes(file.getSize());
+            asset.setContentType(file.getContentType());
+            asset.setUpdatedAt(Instant.now());
+
+            return assetRepository.save(asset);
+
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to update file", e);
+        }
     }
 
     /* ============================
-       SOFT DELETE
+       DOWNLOAD
+       ============================ */
+    public byte[] download(UUID id) {
+        Asset asset = getById(id);
+
+        try {
+            return Files.readAllBytes(Path.of(asset.getStoragePath()));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read file", e);
+        }
+    }
+
+    /* ============================
+       DELETE
        ============================ */
     public void deactivate(UUID id) {
         Asset asset = getById(id);
         asset.setActive(false);
         asset.setUpdatedAt(Instant.now());
-        repository.save(asset);
+        assetRepository.save(asset);
     }
     public Asset getActiveAsset(String assetId) {
-
-        UUID id;
-        try {
-            id = UUID.fromString(assetId);
-        } catch (IllegalArgumentException e) {
-            throw new RuntimeException("Invalid assetId format");
-        }
-
-        Asset asset = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Asset not found"));
-
-        if (!asset.isActive()) {
-            throw new RuntimeException("Asset is inactive");
-        }
-
-        return asset;
+        return assetRepository.findById(UUID.fromString(assetId))
+                .filter(Asset::isActive)
+                .orElseThrow(() -> new RuntimeException("Active asset not found"));
     }
 
 }
